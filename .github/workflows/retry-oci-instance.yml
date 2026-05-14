@@ -1,0 +1,114 @@
+name: OCI ARM Instance Retry
+
+# Trigger manually from the GitHub Actions tab.
+# You click Run workflow whenever you want to start a session.
+on:
+  workflow_dispatch:
+
+jobs:
+  create-instance:
+    name: Retry ARM Instance Creation
+    runs-on: ubuntu-latest
+
+    # 6 hours is GitHub's maximum for a single job.
+    # The retry loop will run until it succeeds or this limit is hit.
+    timeout-minutes: 360
+
+    steps:
+
+      - name: Install OCI CLI
+        run: |
+          curl -L \
+            https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh \
+            | bash -s -- --accept-all-defaults
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=/home/runner/.oci/oci_api_key.pem
+          EOF
+          printf '%s' '${{ secrets.OCI_PRIVATE_KEY }}' > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+
+      - name: Verify OCI CLI authentication
+        run: |
+          oci iam region list --output table
+
+      - name: Run instance creation retry loop
+        env:
+          COMPARTMENT_ID: ${{ secrets.OCI_TENANCY_OCID }}
+          SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+          IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
+          AD_1: ${{ secrets.OCI_AD_1 }}
+          AD_2: ${{ secrets.OCI_AD_2 }}
+          AD_3: ${{ secrets.OCI_AD_3 }}
+          SSH_KEY: ${{ secrets.BITWARDEN_SSH_PUBLIC_KEY }}
+        run: |
+          SHAPE="VM.Standard.A1.Flex"
+          OCPUS=2
+          MEMORY_GB=12
+          BOOT_VOLUME_GB=80
+          DISPLAY_NAME="bitwarden-vm"
+          WAIT_SECONDS=60
+          ADS=("$AD_1" "$AD_2" "$AD_3")
+          ATTEMPT=0
+
+          echo "===== Retry loop started ====="
+          echo "Shape: $SHAPE | OCPUs: $OCPUS | RAM: ${MEMORY_GB}GB"
+
+          while true; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Attempt #${ATTEMPT}"
+
+            for AD in "${ADS[@]}"; do
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] Trying: ${AD}"
+
+              RESULT=$(oci compute instance launch \
+                --availability-domain "$AD" \
+                --compartment-id "$COMPARTMENT_ID" \
+                --display-name "$DISPLAY_NAME" \
+                --shape "$SHAPE" \
+                --shape-config "{\"ocpus\":${OCPUS},\"memoryInGBs\":${MEMORY_GB}}" \
+                --subnet-id "$SUBNET_ID" \
+                --image-id "$IMAGE_ID" \
+                --ssh-authorized-keys-file <(echo "$SSH_KEY") \
+                --boot-volume-size-in-gbs "$BOOT_VOLUME_GB" \
+                --assign-public-ip true \
+                2>&1)
+
+              if echo "$RESULT" | grep -q '"id": "ocid1.instance'; then
+                echo ""
+                echo "=========================================="
+                echo "  SUCCESS: Instance created in ${AD}"
+                echo "=========================================="
+                echo ""
+                echo "Go to OCI Console > Compute > Instances"
+                echo "Find bitwarden-vm and copy its Public IP."
+                echo ""
+                exit 0
+              fi
+
+              if echo "$RESULT" | grep -qi "capacity" || \
+                 echo "$RESULT" | grep -qi "InternalError"; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] No capacity in ${AD}."
+                continue
+              fi
+
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] Unexpected error in ${AD}:"
+              echo "$RESULT"
+              echo "Fix the configuration and re-run the workflow."
+              exit 1
+
+            done
+
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] All ADs tried. Waiting ${WAIT_SECONDS}s."
+            sleep "$WAIT_SECONDS"
+
+          done
