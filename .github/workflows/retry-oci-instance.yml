@@ -102,7 +102,7 @@ jobs:
                 --ssh-authorized-keys-file <(echo "$SSH_KEY") \
                 --boot-volume-size-in-gbs "$BOOT_VOLUME_GB" \
                 --assign-public-ip true \
-                2>&1)
+                2>&1) || true
 
               if echo "$RESULT" | grep -q '"id": "ocid1.instance'; then
                 echo ""
