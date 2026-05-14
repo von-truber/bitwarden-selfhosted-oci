@@ -104,6 +104,7 @@ jobs:
                 --assign-public-ip true \
                 2>&1) || true
 
+              # Success
               if echo "$RESULT" | grep -q '"id": "ocid1.instance'; then
                 echo ""
                 echo "=========================================="
@@ -116,21 +117,25 @@ jobs:
                 exit 0
               fi
 
-              if echo "$RESULT" | grep -qi "capacity" || \
-                 echo "$RESULT" | grep -qi "InternalError"; then
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] No capacity in ${AD}."
-                continue
+              # Fatal configuration errors — retrying will never help, stop immediately
+              if echo "$RESULT" | grep -qi "InvalidParameter" || \
+                 echo "$RESULT" | grep -qi "NotAuthorizedOrNotFound" || \
+                 echo "$RESULT" | grep -qi "AuthenticationFailed" || \
+                 echo "$RESULT" | grep -qi "InvalidShape" || \
+                 echo "$RESULT" | grep -qi "LimitExceeded"; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Fatal error in ${AD} — fix configuration and re-run."
+                echo "ERROR_CODE: $(echo "$RESULT" | grep -o '"code": "[^"]*"' | head -1)"
+                echo "ERROR_MSG:  $(echo "$RESULT" | grep -o '"message": "[^"]*"' | head -1)"
+                exit 1
               fi
 
-              echo "[$(date '+%Y-%m-%d %H:%M:%S')] Unexpected error in ${AD}:"
-              echo "ERROR_CODE: $(echo "$RESULT" | grep -o '"code": "[^"]*"' | head -1)"
-              echo "ERROR_MSG: $(echo "$RESULT" | grep -o '"message": "[^"]*"' | head -1)"
-              echo "Fix the configuration and re-run the workflow."
-              exit 1
+              # Everything else (capacity, host capacity, timeouts, 500s, etc.) is transient
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] Transient issue in ${AD} — will retry."
+              echo "DETAIL: $(echo "$RESULT" | grep -o '"message": "[^"]*"' | head -1)"
 
             done
 
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] All ADs tried. Waiting ${WAIT_SECONDS}s."
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] All ADs tried. Waiting ${WAIT_SECONDS}s before next attempt."
             sleep "$WAIT_SECONDS"
 
           done
