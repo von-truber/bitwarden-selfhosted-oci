@@ -117,7 +117,9 @@ jobs:
               fi
 
               if echo "$RESULT" | grep -qi "capacity" || \
-                 echo "$RESULT" | grep -qi "InternalError"; then
+                 echo "$RESULT" | grep -qi "InternalError"
+                 echo "$RESULT" | grep -qi "timed out" || \
+                 echo "$RESULT" | grep -qi "timeout"; then
                 echo "[$(date '+%Y-%m-%d %H:%M:%S')] No capacity in ${AD}."
                 continue
               fi
