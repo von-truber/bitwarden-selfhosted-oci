@@ -26,16 +26,37 @@ jobs:
       - name: Configure OCI CLI
         run: |
           mkdir -p ~/.oci
-          cat > ~/.oci/config << EOF
-          [DEFAULT]
-          user=${{ secrets.OCI_USER_OCID }}
-          fingerprint=${{ secrets.OCI_FINGERPRINT }}
-          tenancy=${{ secrets.OCI_TENANCY_OCID }}
-          region=${{ secrets.OCI_REGION }}
-          key_file=/home/runner/.oci/oci_api_key.pem
-          EOF
-          printf '%s' '${{ secrets.OCI_PRIVATE_KEY }}' > ~/.oci/oci_api_key.pem
+
+          # Write config file using printf to avoid heredoc indentation issues
+          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=/home/runner/.oci/oci_api_key.pem\n' \
+            "$OCI_USER" \
+            "$OCI_FINGERPRINT" \
+            "$OCI_TENANCY" \
+            "$OCI_REGION" \
+            > ~/.oci/config
+
+          # Write private key preserving newlines
+          echo "$OCI_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem
+
+          # Verify files were written
+          echo "Config file contents (keys masked):"
+          grep -v "^$" ~/.oci/config
+
+          echo "Private key line count:"
+          wc -l ~/.oci/oci_api_key.pem
+
+          echo "Private key first line:"
+          head -1 ~/.oci/oci_api_key.pem
+
+          echo "Private key last line:"
+          tail -1 ~/.oci/oci_api_key.pem
+        env:
+          OCI_USER: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
 
       - name: Verify OCI CLI authentication
         run: |
@@ -102,7 +123,8 @@ jobs:
               fi
 
               echo "[$(date '+%Y-%m-%d %H:%M:%S')] Unexpected error in ${AD}:"
-              echo "$RESULT"
+              echo "ERROR_CODE: $(echo "$RESULT" | grep -o '"code": "[^"]*"' | head -1)"
+              echo "ERROR_MSG: $(echo "$RESULT" | grep -o '"message": "[^"]*"' | head -1)"
               echo "Fix the configuration and re-run the workflow."
               exit 1
 
